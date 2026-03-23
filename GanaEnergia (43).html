@@ -5,6 +5,7 @@
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>¡Que No Te La Cuelen!</title>
 <link href="https://fonts.googleapis.com/css2?family=Syne:wght@400;500;600;700;800&family=DM+Sans:ital,opsz,wght@0,9..40,300;0,9..40,400;0,9..40,500;1,9..40,400&family=DM+Mono:wght@400;500&display=swap" rel="stylesheet">
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
 <style>
 *{box-sizing:border-box;margin:0;padding:0}
 :root{
@@ -242,7 +243,6 @@ select option{background:var(--card2)}
 .grupo-chevron{font-size:11px;color:var(--ink3);transition:transform .2s}
 .grupo-chevron.open{transform:rotate(180deg)}
 .grupo-body{overflow:hidden;transition:max-height .3s ease}
-.grupo-body.open{}
 .grupo-body .card{margin-top:4px;margin-bottom:0;border-top-left-radius:var(--r);border-top-right-radius:var(--r)}
 /* inline state change buttons */
 .cr-actions{display:flex;gap:6px;margin-top:8px;flex-wrap:wrap}
@@ -488,6 +488,22 @@ const ldC=()=>{try{return JSON.parse(localStorage.getItem('qntlc')||'[]')}catch(
 const svC=d=>localStorage.setItem('qntlc',JSON.stringify(d));
 const ldH=()=>{try{return JSON.parse(localStorage.getItem('qntlch')||'[]')}catch(e){return[]}};
 const svH=d=>localStorage.setItem('qntlch',JSON.stringify(d));
+let clientesSupabase=[];
+let clientesPendientes=[];
+let supabaseClient=null;
+const supabaseEstadoToUi=e=>{
+  if(e==='pendiente_contrato') return 'pendiente';
+  if(e==='contrato_enviado') return 'enviado';
+  if(e==='contrato_firmado') return 'firmado';
+  if(e==='activo') return 'activo';
+  if(e==='baja') return 'baja';
+  return '';
+};
+const toYmd=v=>v?String(v).slice(0,10):'';
+const idJs=v=>typeof v==='number'?String(v):`'${String(v).replace(/\\/g,'\\\\').replace(/'/g,"\\'")}'`;
+function getClienteById(id){
+  return clientes.find(x=>String(x.id)===String(id))||clientesSupabase.find(x=>String(x.id)===String(id))||null;
+}
 
 let clientes=ldC(), historial=ldH();
 const HOY=new Date(); HOY.setHours(0,0,0,0);
@@ -528,6 +544,7 @@ function diasHastaProx(c){
 }
 
 function getEstado(c){
+  if(c&&c.esSupabase) return supabaseEstadoToUi(c.estado_supabase)||'enviado';
   if(c.baja) return 'baja';
   if(c.activ) return 'activo';
   if(c.firma) return 'firmado';
@@ -646,24 +663,34 @@ function clienteRowHTML(c){
   }).join(''):'';
   const diasLabel=!c.activ?'':dias===null?'<span class="b bg">Completado</span>':dias<0?`<span class="b br">${Math.abs(dias)}d vencido</span>`:dias===0?`<span class="b ba">¡Hoy!</span>`:dias<=7?`<span class="b ba">${dias}d</span>`:`<span style="font-size:12px;color:var(--ink2)">${dias}d</span>`;
   let actions='';
-  if(est==='enviado') actions=`<div class="cr-actions">
-    <button class="cr-act firma-act" onclick="event.stopPropagation();inlineFirma(${c.id})">✍️ Marcar firmado</button>
-    <button class="cr-act" onclick="event.stopPropagation();openDetail(${c.id})">Ver ficha →</button>
+  if(est==='pendiente') actions=`<div class="cr-actions">
+    <button class="cr-act" onclick="event.stopPropagation();openPendienteEnvio(${idJs(c.id)})">Enviar contrato →</button>
+    <button class="cr-act" onclick="event.stopPropagation();openDetail(${idJs(c.id)})">Ver ficha →</button>
+  </div>`;
+  else if(est==='enviado') actions=`<div class="cr-actions">
+    <button class="cr-act firma-act" onclick="event.stopPropagation();inlineFirma(${idJs(c.id)})">✍️ Marcar firmado</button>
+    <button class="cr-act" onclick="event.stopPropagation();openDetail(${idJs(c.id)})">Ver ficha →</button>
   </div>`;
   else if(est==='firmado') actions=`<div class="cr-actions">
-    <button class="cr-act activ-act" onclick="event.stopPropagation();inlineActivar(${c.id})">⚡ Marcar activado</button>
-    <button class="cr-act" onclick="event.stopPropagation();openDetail(${c.id})">Ver ficha →</button>
+    <button class="cr-act activ-act" onclick="event.stopPropagation();inlineActivar(${idJs(c.id)})">⚡ Marcar activado</button>
+    <button class="cr-act" onclick="event.stopPropagation();openDetail(${idJs(c.id)})">Ver ficha →</button>
   </div>`;
   else actions=`<div class="cr-actions">
-    <button class="cr-act" onclick="event.stopPropagation();openDetail(${c.id})">Ver ficha →</button>
+    <button class="cr-act" onclick="event.stopPropagation();openDetail(${idJs(c.id)})">Ver ficha →</button>
   </div>`;
-  return`<div class="cr" onclick="openDetail(${c.id})" style="${c.baja?'cursor:default':''}">
+  const pendExtra=est==='pendiente'&&c.esSupabase?`
+      ${c.cups?`<div class="cid">CUPS: ${c.cups}</div>`:''}
+      ${c.ahorro!==undefined&&c.ahorro!==null?`<div class="cid">Ahorro estimado: ${Number(c.ahorro).toFixed(2)} €</div>`:''}
+      ${c.comercializadora?`<div class="cid">Comercializadora: ${c.comercializadora}</div>`:''}
+    `:'';
+  return`<div class="cr" onclick="openDetail(${idJs(c.id)})" style="${c.baja?'cursor:default':''}">
     <div class="av av-md ${avClass}">${ini(c.nom)}</div>
     <div class="ci">
       <div class="cn">${c.nom} <span class="b ${c.tipo==='Gas'?'bb':'ba'}" style="margin-left:2px">${c.tipo||'Luz'}</span></div>
       <div class="cs">${c.tel||'—'} · ${tiempoConNosotros(c)}</div>
       ${c.contrato?`<div class="cid">ID: ${c.contrato}</div>`:''}
       ${c.dni?`<div class="cid">DNI: ${c.dni}</div>`:''}
+      ${pendExtra}
       ${c.activ&&dots?`<div class="dots">${dots}<span class="dl">${cob}/${TRAMO_DEFS.length}</span></div>`:''}
       ${actions}
     </div>
@@ -675,7 +702,7 @@ function clienteRowHTML(c){
   </div>`;
 }
 
-const grupoOpen={enviado:true,firmado:true,activo:true,baja:false};
+const grupoOpen={pendiente:true,enviado:true,firmado:true,activo:true,baja:false};
 
 function toggleGrupo(key){
   grupoOpen[key]=!grupoOpen[key];
@@ -709,16 +736,30 @@ function renderGrupo(key,titulo,dotColor,lista,emptyMsg){
 }
 
 function renderClientes(){
-  const enviados=clientes.filter(c=>!c.baja&&!c.firma&&!c.activ);
-  const firmados=clientes.filter(c=>!c.baja&&c.firma&&!c.activ);
-  const activos=clientes.filter(c=>!c.baja&&c.activ);
-  const bajas=clientes.filter(c=>c.baja);
+  const pendientes=clientesPendientes;
+  const enviados=[
+    ...clientes.filter(c=>!c.baja&&!c.firma&&!c.activ),
+    ...clientesSupabase.filter(c=>c.estado_supabase==='contrato_enviado')
+  ];
+  const firmados=[
+    ...clientes.filter(c=>!c.baja&&c.firma&&!c.activ),
+    ...clientesSupabase.filter(c=>c.estado_supabase==='contrato_firmado')
+  ];
+  const activos=[
+    ...clientes.filter(c=>!c.baja&&c.activ),
+    ...clientesSupabase.filter(c=>c.estado_supabase==='activo')
+  ];
+  const bajas=[
+    ...clientes.filter(c=>c.baja),
+    ...clientesSupabase.filter(c=>c.estado_supabase==='baja')
+  ];
   const el=document.getElementById('l-clientes-grupos');
-  if(!clientes.length){
+  if(!clientes.length&&!clientesSupabase.length){
     el.innerHTML=`<div class="card"><div class="empty"><div class="empty-i">👤</div><div class="empty-t">Sin clientes aún</div><div class="empty-s">Pulsa "+ Nuevo cliente" para empezar.</div></div></div>`;
     return;
   }
   el.innerHTML=
+    renderGrupo('pendiente','Pendiente de enviar contrato','var(--teal)',pendientes,'Sin pendientes') +
     renderGrupo('enviado','Contrato enviado','var(--teal)',enviados,'Sin pendientes de firma') +
     renderGrupo('firmado','Firmado · pendiente activar','var(--amber)',firmados,'Sin pendientes de activación') +
     renderGrupo('activo','Activo','var(--lime)',activos,'Ningún cliente activo aún') +
@@ -738,7 +779,7 @@ function inlineActivar(id){
 
 let detailId=null;
 function openDetail(id){
-  const c=clientes.find(x=>x.id===id); if(!c) return;
+  const c=getClienteById(id); if(!c) return;
   detailId=id;
   document.getElementById('det-av').textContent=ini(c.nom);
   document.getElementById('det-name').textContent=c.nom;
@@ -747,8 +788,8 @@ function openDetail(id){
   const dc=dias===null?'lime':dias<0?'red':dias<=7?'amber':'';
   const dt=dias===null?'Completado':dias<0?Math.abs(dias)+'d vencido':dias===0?'¡Hoy!':dias+'d';
   const est=getEstado(c);
-  const estTxt={enviado:'Contrato enviado',firmado:'Firmado',activo:'Activo',baja:'De baja'};
-  const estCol={enviado:'color:var(--teal)',firmado:'color:var(--amber)',activo:'color:var(--lime)',baja:'color:var(--red)'};
+  const estTxt={pendiente:'Pendiente de enviar',enviado:'Contrato enviado',firmado:'Firmado',activo:'Activo',baja:'De baja'};
+  const estCol={pendiente:'color:var(--teal)',enviado:'color:var(--teal)',firmado:'color:var(--amber)',activo:'color:var(--lime)',baja:'color:var(--red)'};
   document.getElementById('det-stats').innerHTML=`
     <div class="dstat"><div class="dstat-l">Estado</div><div class="dstat-v" style="font-size:13px;font-weight:700;${estCol[est]}">${estTxt[est]}</div></div>
     <div class="dstat"><div class="dstat-l">Desde</div><div class="dstat-v">${tiempoConNosotros(c)}</div></div>
@@ -810,7 +851,8 @@ function quickActivar(){
 }
 
 function eliminarCliente(){
-  const c=clientes.find(x=>x.id===detailId); if(!c) return;
+  const c=getClienteById(detailId); if(!c) return;
+  if(c.esSupabase){alert('Este cliente viene de Supabase. Eliminarlo no está habilitado aquí.');return;}
   if(!confirm(`¿Eliminar a ${c.nom} definitivamente?\n\nEsto borrará al cliente y todos sus datos. Esta acción no se puede deshacer.`)) return;
   clientes=clientes.filter(x=>x.id!==detailId);
   svC(clientes);
@@ -894,7 +936,9 @@ function guardar(){
 
 let editId=null;
 function openEdit(id){
-  const c=clientes.find(x=>x.id===id); if(!c) return; editId=id;
+  const c=getClienteById(id); if(!c) return;
+  if(c.esSupabase){alert('Cliente de Supabase: usa los cambios de estado de los funnels.');return;}
+  editId=id;
   document.getElementById('e-nom').value=c.nom||'';
   document.getElementById('e-tel').value=c.tel||'';
   document.getElementById('e-dni').value=c.dni||'';
@@ -912,7 +956,8 @@ function saveEdit(){
   const iban = document.getElementById('e-iban').value.trim();
   const envio= document.getElementById('e-envio').value;
   if(!nom||!tel||!iban||!envio){alert('Nombre, teléfono, IBAN y fecha de envío son obligatorios.');return;}
-  const c=clientes.find(x=>x.id===editId); if(!c) return;
+  const c=getClienteById(editId); if(!c) return;
+  if(c.esSupabase){alert('Cliente de Supabase: usa los cambios de estado de los funnels.');return;}
   Object.assign(c,{tipo:document.getElementById('e-tipo').value,nom,tel,dni:dniE,iban,envio,
     contrato:document.getElementById('e-contrato').value.trim(),
     firma:document.getElementById('e-firma').value,
@@ -925,7 +970,8 @@ function buscarBaja(){
   const q=document.getElementById('bq').value.trim().toLowerCase();
   const el=document.getElementById('bres'); if(!q){el.innerHTML='';return;}
   // Search by name OR contract ID
-  const res=clientes.filter(c=>!c.baja&&(
+  const source=[...clientes,...clientesSupabase];
+  const res=source.filter(c=>getEstado(c)!=='baja'&&(
     (c.nom||'').toLowerCase().includes(q)||(c.contrato||'').toLowerCase().includes(q)||(c.dni||'').toLowerCase().includes(q)
   ));
   if(!res.length){el.innerHTML='<p style="font-size:13px;color:var(--ink3);padding:8px 0">Sin resultados.</p>';return;}
@@ -941,7 +987,7 @@ function buscarBaja(){
   el.appendChild(wb);
 }
 function selBaja(id){
-  const c=clientes.find(x=>x.id===id); if(!c) return;
+  const c=getClienteById(id); if(!c) return;
   bajaId=id; document.getElementById('bname').textContent=c.nom+(c.contrato?' — ID: '+c.contrato:'');
   document.getElementById('bform').style.display='block';
   document.getElementById('bfecha').value=new Date().toISOString().split('T')[0];
@@ -951,7 +997,18 @@ function cancelBaja(){bajaId=null;document.getElementById('bform').style.display
 function confirmBaja(){
   const fecha=document.getElementById('bfecha').value;
   if(!fecha){alert('Indica la fecha de baja.');return;}
-  const c=clientes.find(x=>x.id===bajaId); if(!c) return;
+  const c=getClienteById(bajaId); if(!c) return;
+  if(c.esSupabase){
+    if(!supabaseClient){alert('Supabase no disponible.');return;}
+    (async()=>{
+      const {error}=await supabaseClient.from('contratos').update({estado:'baja',fecha_baja:fecha}).eq('id',c.supabase_id);
+      if(error){alert('Error actualizando Supabase: '+error.message);return;}
+      await sincronizarConSupabase();
+      bajaId=null; document.getElementById('bform').style.display='none';
+      closeMo('mo-baja'); show('clientes');
+    })();
+    return;
+  }
   c.baja=fmtC(new Date(fecha+'T12:00:00')); svC(clientes);
   bajaId=null; document.getElementById('bform').style.display='none';
   closeMo('mo-baja'); updateKPIs(); show('clientes');
@@ -960,7 +1017,7 @@ function resetBaja(){bajaId=null;const bf=document.getElementById('bform');if(bf
 
 function openMo(id){document.getElementById(id).classList.add('open');document.body.style.overflow='hidden';}
 function closeMo(id){document.getElementById(id).classList.remove('open');document.body.style.overflow='';}
-['mo-detail','mo-edit','mo-enviado','mo-firmado','mo-activado','mo-baja'].forEach(id=>{
+['mo-detail','mo-edit','mo-enviado','mo-firmado','mo-activado','mo-baja','mo-pendiente-envio'].forEach(id=>{
   const el=document.getElementById(id);
   if(el) el.addEventListener('click',function(e){if(e.target===this)closeMo(id);});
 });
@@ -987,7 +1044,8 @@ let firmadoId=null;
 function buscarFirmado(){
   const q=document.getElementById('fq').value.trim().toLowerCase();
   const el=document.getElementById('fres'); if(!q){el.innerHTML='';return;}
-  const res=clientes.filter(c=>!c.baja&&!c.firma&&(c.dni||'').toLowerCase().includes(q));
+  const source=[...clientes.filter(c=>!c.baja&&!c.firma),...clientesSupabase.filter(c=>c.estado_supabase==='contrato_enviado')];
+  const res=source.filter(c=>(c.dni||'').toLowerCase().includes(q));
   if(!res.length){el.innerHTML='<p style="font-size:13px;color:var(--ink3);padding:8px 0">Sin resultados.</p>';return;}
   el.innerHTML='';
   const wf=document.createElement('div');wf.className='sres';wf.addEventListener('click',e=>e.stopPropagation());
@@ -1001,7 +1059,7 @@ function buscarFirmado(){
   el.appendChild(wf);
 }
 function selFirmado(id){
-  const c=clientes.find(x=>x.id===id); if(!c) return;
+  const c=getClienteById(id); if(!c) return;
   firmadoId=id;
   document.getElementById('fname').textContent=c.nom;
   document.getElementById('f-firma-fecha').value=new Date().toISOString().split('T')[0];
@@ -1014,7 +1072,22 @@ function cancelFirmado(){firmadoId=null;document.getElementById('fform').style.d
 function confirmFirmado(){
   const fecha=document.getElementById('f-firma-fecha').value;
   if(!fecha){alert('Indica la fecha de firma.');return;}
-  const c=clientes.find(x=>x.id===firmadoId); if(!c) return;
+  const c=getClienteById(firmadoId); if(!c) return;
+  if(c.esSupabase){
+    if(!supabaseClient){alert('Supabase no disponible.');return;}
+    const cont=document.getElementById('f-firma-contrato').value.trim();
+    (async()=>{
+      const {error}=await supabaseClient.from('contratos').update({estado:'contrato_firmado',fecha_contrato_firmado:fecha}).eq('id',c.supabase_id);
+      if(error){alert('Error actualizando Supabase: '+error.message);return;}
+      if(cont) c.contrato=cont;
+      firmadoId=null;
+      document.getElementById('fform').style.display='none';
+      closeMo('mo-firmado');
+      await sincronizarConSupabase();
+      renderClientes(); updateKPIs();
+    })();
+    return;
+  }
   c.firma=fecha;
   const cont=document.getElementById('f-firma-contrato').value.trim();
   if(cont) c.contrato=cont;
@@ -1030,7 +1103,8 @@ let activadoId=null;
 function buscarActivado(){
   const q=document.getElementById('aq').value.trim().toLowerCase();
   const el=document.getElementById('ares'); if(!q){el.innerHTML='';return;}
-  const res=clientes.filter(c=>!c.baja&&!c.activ&&(c.dni||'').toLowerCase().includes(q));
+  const source=[...clientes.filter(c=>!c.baja&&!c.activ),...clientesSupabase.filter(c=>c.estado_supabase==='contrato_firmado')];
+  const res=source.filter(c=>(c.dni||'').toLowerCase().includes(q));
   if(!res.length){el.innerHTML='<p style="font-size:13px;color:var(--ink3);padding:8px 0">Sin resultados.</p>';return;}
   el.innerHTML='';
   const wa=document.createElement('div');wa.className='sres';wa.addEventListener('click',e=>e.stopPropagation());
@@ -1044,7 +1118,7 @@ function buscarActivado(){
   el.appendChild(wa);
 }
 function selActivado(id){
-  const c=clientes.find(x=>x.id===id); if(!c) return;
+  const c=getClienteById(id); if(!c) return;
   activadoId=id;
   document.getElementById('aname').textContent=c.nom;
   document.getElementById('a-activ-fecha').value=new Date().toISOString().split('T')[0];
@@ -1056,13 +1130,52 @@ function cancelActivado(){activadoId=null;document.getElementById('aform').style
 function confirmActivado(){
   const fecha=document.getElementById('a-activ-fecha').value;
   if(!fecha){alert('Indica la fecha de activación.');return;}
-  const c=clientes.find(x=>x.id===activadoId); if(!c) return;
+  const c=getClienteById(activadoId); if(!c) return;
+  if(c.esSupabase){
+    if(!supabaseClient){alert('Supabase no disponible.');return;}
+    (async()=>{
+      const {error}=await supabaseClient.from('contratos').update({estado:'activo',fecha_activado:fecha}).eq('id',c.supabase_id);
+      if(error){alert('Error actualizando Supabase: '+error.message);return;}
+      activadoId=null;
+      document.getElementById('aform').style.display='none';
+      closeMo('mo-activado');
+      await sincronizarConSupabase();
+      renderClientes(); updateKPIs();
+    })();
+    return;
+  }
   c.activ=fecha;
   svC(clientes);
   activadoId=null;
   document.getElementById('aform').style.display='none';
   closeMo('mo-activado');
   renderClientes(); updateKPIs();
+}
+
+let pendienteEnvioId=null;
+function openPendienteEnvio(id){
+  const c=getClienteById(id); if(!c) return;
+  pendienteEnvioId=id;
+  document.getElementById('pe-name').textContent=c.nom+(c.dni?' · '+c.dni:'');
+  document.getElementById('pe-fecha').value=new Date().toISOString().split('T')[0];
+  openMo('mo-pendiente-envio');
+}
+function cancelPendienteEnvio(){
+  pendienteEnvioId=null;
+  closeMo('mo-pendiente-envio');
+}
+function confirmPendienteEnvio(){
+  const fecha=document.getElementById('pe-fecha').value;
+  if(!fecha){alert('Indica la fecha de envío.');return;}
+  const c=getClienteById(pendienteEnvioId); if(!c||!c.esSupabase){cancelPendienteEnvio();return;}
+  if(!supabaseClient){alert('Supabase no disponible.');return;}
+  (async()=>{
+    const {error}=await supabaseClient.from('contratos').update({estado:'contrato_enviado',fecha_contrato_enviado:fecha}).eq('id',c.supabase_id);
+    if(error){alert('Error actualizando Supabase: '+error.message);return;}
+    cancelPendienteEnvio();
+    await sincronizarConSupabase();
+    renderClientes();
+  })();
 }
 
 updateKPIs();
@@ -1165,6 +1278,72 @@ renderHoy();
     </div>
   </div>
 </div>
+
+<!-- MODAL: ENVIAR CONTRATO (PENDIENTE) -->
+<div class="mo" id="mo-pendiente-envio">
+  <div class="moc" style="max-width:460px">
+    <div class="mo-h">
+      <h2>Enviar contrato</h2>
+      <button class="mo-x" onclick="cancelPendienteEnvio()">✕</button>
+    </div>
+    <p id="pe-name" style="font-size:13px;color:var(--ink2);margin-bottom:1rem"></p>
+    <div class="fi" style="max-width:280px">
+      <label>Fecha de envío <em>*</em></label>
+      <input id="pe-fecha" type="date"/>
+    </div>
+    <div class="brow" style="margin-top:1.25rem">
+      <button class="btn" onclick="cancelPendienteEnvio()">Cancelar</button>
+      <button class="btn btn-k" onclick="confirmPendienteEnvio()">Confirmar envío</button>
+    </div>
+  </div>
+</div>
+
+<script>
+async function sincronizarConSupabase(){
+  try{
+    if(!window.supabase||!window.supabase.createClient) return;
+    if(!supabaseClient){
+      supabaseClient=window.supabase.createClient(
+        'https://zxdkdephdsjqqqzmeeuq.supabase.co',
+        'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Inp4ZGtkZXBoZHNqcXFxem1lZXVxIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzQyNTQ2NTYsImV4cCI6MjA4OTgzMDY1Nn0.Szet-Du-xRKbBABgTzOQQrbosvN-noCr4QHyofklS_I'
+      );
+    }
+    const {data,error}=await supabaseClient
+      .from('contratos')
+      .select('id,cliente_id,tipo,cups,comercializadora_actual,ahorro_estimado,estado,fecha_contrato_enviado,fecha_contrato_firmado,fecha_activado,fecha_baja,clientes(nombre,apellidos,dni,telefono,iban_cargo)');
+    if(error) throw error;
+    clientesSupabase=(data||[]).map(r=>{
+      const cli=r.clientes||{};
+      const nom=((cli.nombre||'')+' '+(cli.apellidos||'')).trim();
+      return {
+        id:`sb-${r.id}`,
+        esSupabase:true,
+        supabase_id:r.id,
+        cliente_id:r.cliente_id,
+        nom:nom||'Sin nombre',
+        dni:cli.dni||'',
+        tel:cli.telefono||'',
+        iban:cli.iban_cargo||'',
+        cups:r.cups||'',
+        tipo:r.tipo||'Luz',
+        comercializadora:r.comercializadora_actual||'',
+        ahorro:r.ahorro_estimado,
+        estado_supabase:r.estado||'pendiente_contrato',
+        envio:toYmd(r.fecha_contrato_enviado),
+        firma:toYmd(r.fecha_contrato_firmado),
+        activ:toYmd(r.fecha_activado),
+        baja:toYmd(r.fecha_baja),
+        contrato:String(r.id)
+      };
+    });
+    clientesPendientes=clientesSupabase.filter(c=>c.estado_supabase==='pendiente_contrato');
+    if(typeof renderClientes==='function') renderClientes();
+  }catch(e){
+    console.warn('Supabase no disponible, se mantiene modo local.',e);
+  }
+}
+window.addEventListener('load', sincronizarConSupabase);
+</script>
 
 </body>
 </html>
