@@ -467,8 +467,6 @@ const TRAMO_DEFS=[
   {key:'t2',label:'6 meses', importe:12.5},
   {key:'t3',label:'9 meses', importe:12.5},
   {key:'t4',label:'12 meses',importe:12.5},
-  {key:'t5',label:'Año 2',   importe:20},
-  {key:'t6',label:'Año 3',   importe:20},
 ];
 
 function calcFechas(a){
@@ -488,6 +486,8 @@ const ldC=()=>{try{return JSON.parse(localStorage.getItem('qntlc')||'[]')}catch(
 const svC=d=>localStorage.setItem('qntlc',JSON.stringify(d));
 const ldH=()=>{try{return JSON.parse(localStorage.getItem('qntlch')||'[]')}catch(e){return[]}};
 const svH=d=>localStorage.setItem('qntlch',JSON.stringify(d));
+const ldSP=()=>{try{return JSON.parse(localStorage.getItem('qntlcsbp')||'{}')}catch(e){return{}}};
+const svSP=d=>localStorage.setItem('qntlcsbp',JSON.stringify(d));
 let clientesSupabase=[];
 let clientesPendientes=[];
 let supabaseClient=null;
@@ -495,7 +495,7 @@ const supabaseEstadoToUi=e=>{
   if(e==='pendiente_contrato') return 'pendiente';
   if(e==='contrato_enviado') return 'enviado';
   if(e==='contrato_firmado') return 'firmado';
-  if(e==='activo') return 'activo';
+  if(e==='activado') return 'activo';
   if(e==='baja') return 'baja';
   return '';
 };
@@ -512,7 +512,7 @@ document.getElementById('fecha-hoy').textContent=fmtL(HOY);
 
 function getPagos(dia){
   const r=[];
-  for(const c of clientes){
+  for(const c of [...clientes,...clientesSupabase]){
     if(!c.activ||c.baja) continue;
     const fs=calcFechas(c.activ);
     TRAMO_DEFS.forEach((t,i)=>{const fp=new Date(fs[i]);fp.setHours(0,0,0,0);if(sD(fp,dia)&&!c[t.key])r.push({c,t,fp});});
@@ -522,7 +522,7 @@ function getPagos(dia){
 
 function getPagosVencidos(){
   const r=[];
-  for(const c of clientes){
+  for(const c of [...clientes,...clientesSupabase]){
     if(!c.activ||c.baja) continue;
     const fs=calcFechas(c.activ);
     TRAMO_DEFS.forEach((t,i)=>{const fp=new Date(fs[i]);fp.setHours(0,0,0,0);if(fp<HOY&&!c[t.key])r.push({c,t,fp});});
@@ -583,9 +583,18 @@ function updateKPIs(){
 }
 
 function marcarPagado(cid,key){
-  const c=clientes.find(x=>x.id===cid),t=TRAMO_DEFS.find(x=>x.key===key);
+  const c=getClienteById(cid),t=TRAMO_DEFS.find(x=>x.key===key);
   if(!c||!t) return;
-  c[key]=new Date().toISOString(); svC(clientes);
+  c[key]=new Date().toISOString();
+  if(c.esSupabase){
+    const sp=ldSP();
+    const sid=String(c.supabase_id);
+    if(!sp[sid]) sp[sid]={};
+    sp[sid][key]=c[key];
+    svSP(sp);
+  }else{
+    svC(clientes);
+  }
   historial.push({id:Date.now(),clienteId:cid,nom:c.nom,tel:c.tel||'',iban:c.iban||'',tramo:t.label,importe:t.importe,fecha:new Date().toISOString()});
   svH(historial);
   const card=document.getElementById(`pc-${cid}-${key}`);
@@ -606,6 +615,8 @@ function payCardHTML(c,t,vencido){
   const idx=TRAMO_DEFS.findIndex(x=>x.key===t.key);
   const fpDate=fechas[idx];
   const dias=vencido?Math.floor((HOY-new Date(new Date(fpDate).setHours(0,0,0,0)))/(1000*60*60*24)):0;
+  const ibanPago=(c.esSupabase?(c.iban_bono||c.iban):c.iban)||'Sin IBAN';
+  const activLabel=c.activ?fmtC(new Date(c.activ+'T12:00:00')):'—';
   return`<div class="pay-card${vencido?' vencido':''}" id="pc-${c.id}-${t.key}">
     <div class="pct">
       <div class="av av-md ${vencido?'av-red':'av-lime'}">${ini(c.nom)}</div>
@@ -613,7 +624,8 @@ function payCardHTML(c,t,vencido){
         <div class="pname">${c.nom} <span class="b ${c.tipo==='Gas'?'bb':'ba'}" style="margin-left:4px">${c.tipo||'Luz'}</span></div>
         <div class="pinfo">
           <span>${c.tel||'Sin teléfono'}</span>
-          <span class="pmono">${c.iban||'Sin IBAN'}</span>
+          <span class="pmono">${ibanPago}</span>
+          <span style="font-size:11px;color:var(--ink3)">Activación: ${activLabel}</span>
           ${c.contrato?`<span style="font-size:11px;color:var(--ink3)">Contrato: <span style="font-family:'DM Mono',monospace">${c.contrato}</span></span>`:''}
         </div>
         ${vencido?`<div class="pvtag">Vencido hace ${dias} día${dias===1?'':'s'} — ${fmtC(fpDate)}</div>`:''}
@@ -662,37 +674,51 @@ function clienteRowHTML(c){
     return`<div class="d ${done?'dk':''} ${isVenc?'dv':''} ${isN&&!isVenc?'dn':''}" title="${t.label}: ${done?'✓ cobrado':fmtC(fs[i])}"></div>`;
   }).join(''):'';
   const diasLabel=!c.activ?'':dias===null?'<span class="b bg">Completado</span>':dias<0?`<span class="b br">${Math.abs(dias)}d vencido</span>`:dias===0?`<span class="b ba">¡Hoy!</span>`:dias<=7?`<span class="b ba">${dias}d</span>`:`<span style="font-size:12px;color:var(--ink2)">${dias}d</span>`;
+  const actionPrimaryStyle='background:var(--amber-bg);color:var(--amber);border-color:rgba(232,168,58,.35)';
   let actions='';
   if(est==='pendiente') actions=`<div class="cr-actions">
-    <button class="cr-act" onclick="event.stopPropagation();openPendienteEnvio(${idJs(c.id)})">Enviar contrato →</button>
+    <button class="cr-act" style="${actionPrimaryStyle}" onclick="event.stopPropagation();openPendienteEnvio(${idJs(c.id)})">Contrato Enviado</button>
     <button class="cr-act" onclick="event.stopPropagation();openDetail(${idJs(c.id)})">Ver ficha →</button>
   </div>`;
   else if(est==='enviado') actions=`<div class="cr-actions">
-    <button class="cr-act firma-act" onclick="event.stopPropagation();inlineFirma(${idJs(c.id)})">✍️ Marcar firmado</button>
+    <button class="cr-act" style="${actionPrimaryStyle}" onclick="event.stopPropagation();inlineFirma(${idJs(c.id)})">✍️ Marcar firmado</button>
     <button class="cr-act" onclick="event.stopPropagation();openDetail(${idJs(c.id)})">Ver ficha →</button>
   </div>`;
   else if(est==='firmado') actions=`<div class="cr-actions">
-    <button class="cr-act activ-act" onclick="event.stopPropagation();inlineActivar(${idJs(c.id)})">⚡ Marcar activado</button>
+    <button class="cr-act" style="${actionPrimaryStyle}" onclick="event.stopPropagation();inlineActivar(${idJs(c.id)})">⚡ Marcar activado</button>
     <button class="cr-act" onclick="event.stopPropagation();openDetail(${idJs(c.id)})">Ver ficha →</button>
   </div>`;
   else actions=`<div class="cr-actions">
     <button class="cr-act" onclick="event.stopPropagation();openDetail(${idJs(c.id)})">Ver ficha →</button>
   </div>`;
-  const pendExtra=est==='pendiente'&&c.esSupabase?`
-      ${c.cups?`<div class="cid">CUPS: ${c.cups}</div>`:''}
-      ${c.ahorro!==undefined&&c.ahorro!==null?`<div class="cid">Ahorro estimado: ${Number(c.ahorro).toFixed(2)} €</div>`:''}
-      ${c.comercializadora?`<div class="cid">Comercializadora: ${c.comercializadora}</div>`:''}
-    `:'';
+  const detalleCompleto=`
+      <div class="cid">Comercializadora anterior: ${c.comercializadora||'—'}</div>
+      <div class="cid">DNI titular contrato: ${c.dni||'—'}</div>
+      <div class="cid">Email contacto: ${c.email||'—'}</div>
+      <div class="cid">Telefono de contacto: ${c.tel||'—'}</div>
+      <div class="cid">IBAN cargo luz/gas: ${c.iban||'—'}</div>
+      <div class="cid">IBAN bono fidelidad: ${c.iban_bono||'—'}</div>
+    `;
+  const extraDetalle=`
+      <div class="cs">${c.tel||'—'} · ${tiempoConNosotros(c)}</div>
+      ${c.contrato?`<div class="cid">ID: ${c.contrato}</div>`:''}
+      ${detalleCompleto}
+    `;
+  const ciInner=`
+      <div class="cn">${c.nom} <span class="b ${c.tipo==='Gas'?'bb':'ba'}" style="margin-left:2px">${c.tipo||'Luz'}</span></div>
+      <details onclick="event.stopPropagation()" style="margin-top:4px">
+        <summary style="cursor:pointer;font-size:12px;font-weight:700;color:var(--amber);list-style:none">Ver más</summary>
+        <div style="margin-top:8px">
+          ${extraDetalle}
+        </div>
+      </details>
+      ${c.activ&&dots?`<div class="dots">${dots}<span class="dl">${cob}/${TRAMO_DEFS.length}</span></div>`:''}
+      ${actions}
+    `;
   return`<div class="cr" onclick="openDetail(${idJs(c.id)})" style="${c.baja?'cursor:default':''}">
     <div class="av av-md ${avClass}">${ini(c.nom)}</div>
     <div class="ci">
-      <div class="cn">${c.nom} <span class="b ${c.tipo==='Gas'?'bb':'ba'}" style="margin-left:2px">${c.tipo||'Luz'}</span></div>
-      <div class="cs">${c.tel||'—'} · ${tiempoConNosotros(c)}</div>
-      ${c.contrato?`<div class="cid">ID: ${c.contrato}</div>`:''}
-      ${c.dni?`<div class="cid">DNI: ${c.dni}</div>`:''}
-      ${pendExtra}
-      ${c.activ&&dots?`<div class="dots">${dots}<span class="dl">${cob}/${TRAMO_DEFS.length}</span></div>`:''}
-      ${actions}
+      ${ciInner}
     </div>
     <div style="display:flex;flex-direction:column;align-items:flex-end;gap:6px;flex-shrink:0;padding-left:8px">
       ${diasLabel}
@@ -747,7 +773,7 @@ function renderClientes(){
   ];
   const activos=[
     ...clientes.filter(c=>!c.baja&&c.activ),
-    ...clientesSupabase.filter(c=>c.estado_supabase==='activo')
+    ...clientesSupabase.filter(c=>c.estado_supabase==='activado')
   ];
   const bajas=[
     ...clientes.filter(c=>c.baja),
@@ -802,7 +828,10 @@ function openDetail(id){
   const fields=[
     ['Teléfono',c.tel||'—',false],
     ['DNI titular',c.dni||'—',true],
-    ['IBAN',c.iban||'—',true],
+    ['IBAN cargo luz/gas',c.iban||'—',true],
+    ['IBAN bono fidelidad',c.iban_bono||'—',true],
+    ['CUPS',c.cups||'—',true],
+    ['Comercializadora anterior',c.comercializadora||'—',false],
     ['Envío contrato',c.envio?fmtC(new Date(c.envio+'T12:00:00')):'—',false],
     ['ID Contrato',c.contrato||'—',true],
     ['Fecha firma',c.firma?fmtC(new Date(c.firma+'T12:00:00')):'Pendiente',false],
@@ -828,6 +857,14 @@ function openEditFromDetail(){closeMo('mo-detail');if(detailId) setTimeout(()=>o
 
 function quickFirma(){
   closeMo('mo-detail');
+  const c=getClienteById(detailId);
+  if(c&&c.esSupabase){
+    setTimeout(()=>{
+      openMo('mo-firmado');
+      selFirmado(detailId);
+    },120);
+    return;
+  }
   setTimeout(()=>{
     openEdit(detailId);
     setTimeout(()=>{
@@ -841,6 +878,14 @@ function quickFirma(){
 
 function quickActivar(){
   closeMo('mo-detail');
+  const c=getClienteById(detailId);
+  if(c&&c.esSupabase){
+    setTimeout(()=>{
+      openMo('mo-activado');
+      selActivado(detailId);
+    },120);
+    return;
+  }
   setTimeout(()=>{
     openEdit(detailId);
     setTimeout(()=>{
@@ -937,7 +982,6 @@ function guardar(){
 let editId=null;
 function openEdit(id){
   const c=getClienteById(id); if(!c) return;
-  if(c.esSupabase){alert('Cliente de Supabase: usa los cambios de estado de los funnels.');return;}
   editId=id;
   document.getElementById('e-nom').value=c.nom||'';
   document.getElementById('e-tel').value=c.tel||'';
@@ -957,7 +1001,40 @@ function saveEdit(){
   const envio= document.getElementById('e-envio').value;
   if(!nom||!tel||!iban||!envio){alert('Nombre, teléfono, IBAN y fecha de envío son obligatorios.');return;}
   const c=getClienteById(editId); if(!c) return;
-  if(c.esSupabase){alert('Cliente de Supabase: usa los cambios de estado de los funnels.');return;}
+  if(c.esSupabase){
+    if(!supabaseClient){alert('Supabase no disponible.');return;}
+    const parts=nom.split(/\s+/).filter(Boolean);
+    const nombre=parts[0]||nom;
+    const apellidos=parts.slice(1).join(' ');
+    const firma=document.getElementById('e-firma').value;
+    const activ=document.getElementById('e-activ').value;
+    let estado='pendiente_contrato';
+    if(activ) estado='activado';
+    else if(firma) estado='contrato_firmado';
+    else if(envio) estado='contrato_enviado';
+    (async()=>{
+      const {error:e1}=await supabaseClient
+        .from('clientes')
+        .update({nombre,apellidos,dni:dniE,telefono:tel,iban_cargo:iban})
+        .eq('id',c.cliente_id);
+      if(e1){alert('Error actualizando cliente en Supabase: '+e1.message);return;}
+      const {error:e2}=await supabaseClient
+        .from('contratos')
+        .update({
+          tipo:document.getElementById('e-tipo').value,
+          fecha_contrato_enviado:envio||null,
+          fecha_contrato_firmado:firma||null,
+          fecha_activado:activ||null,
+          estado
+        })
+        .eq('id',c.supabase_id);
+      if(e2){alert('Error actualizando contrato en Supabase: '+e2.message);return;}
+      closeMo('mo-edit');
+      await sincronizarConSupabase();
+      renderClientes(); updateKPIs();
+    })();
+    return;
+  }
   Object.assign(c,{tipo:document.getElementById('e-tipo').value,nom,tel,dni:dniE,iban,envio,
     contrato:document.getElementById('e-contrato').value.trim(),
     firma:document.getElementById('e-firma').value,
@@ -1134,7 +1211,7 @@ function confirmActivado(){
   if(c.esSupabase){
     if(!supabaseClient){alert('Supabase no disponible.');return;}
     (async()=>{
-      const {error}=await supabaseClient.from('contratos').update({estado:'activo',fecha_activado:fecha}).eq('id',c.supabase_id);
+      const {error}=await supabaseClient.from('contratos').update({estado:'activado',fecha_activado:fecha}).eq('id',c.supabase_id);
       if(error){alert('Error actualizando Supabase: '+error.message);return;}
       activadoId=null;
       document.getElementById('aform').style.display='none';
@@ -1310,11 +1387,13 @@ async function sincronizarConSupabase(){
     }
     const {data,error}=await supabaseClient
       .from('contratos')
-      .select('id,cliente_id,tipo,cups,comercializadora_actual,ahorro_estimado,estado,fecha_contrato_enviado,fecha_contrato_firmado,fecha_activado,fecha_baja,clientes(nombre,apellidos,dni,telefono,iban_cargo)');
+      .select('id,cliente_id,tipo,cups,comercializadora_actual,ahorro_estimado,estado,fecha_contrato_enviado,fecha_contrato_firmado,fecha_activado,fecha_baja,clientes(nombre,apellidos,dni,email,telefono,iban_cargo,iban_bono)');
     if(error) throw error;
     clientesSupabase=(data||[]).map(r=>{
       const cli=r.clientes||{};
       const nom=((cli.nombre||'')+' '+(cli.apellidos||'')).trim();
+      const sp=ldSP();
+      const p=sp[String(r.id)]||{};
       return {
         id:`sb-${r.id}`,
         esSupabase:true,
@@ -1322,8 +1401,10 @@ async function sincronizarConSupabase(){
         cliente_id:r.cliente_id,
         nom:nom||'Sin nombre',
         dni:cli.dni||'',
+        email:cli.email||'',
         tel:cli.telefono||'',
         iban:cli.iban_cargo||'',
+        iban_bono:cli.iban_bono||'',
         cups:r.cups||'',
         tipo:r.tipo||'Luz',
         comercializadora:r.comercializadora_actual||'',
@@ -1333,7 +1414,8 @@ async function sincronizarConSupabase(){
         firma:toYmd(r.fecha_contrato_firmado),
         activ:toYmd(r.fecha_activado),
         baja:toYmd(r.fecha_baja),
-        contrato:String(r.id)
+        contrato:String(r.id),
+        t1:p.t1||'',t2:p.t2||'',t3:p.t3||'',t4:p.t4||''
       };
     });
     clientesPendientes=clientesSupabase.filter(c=>c.estado_supabase==='pendiente_contrato');
