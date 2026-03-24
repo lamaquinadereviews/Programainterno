@@ -750,21 +750,28 @@ function clienteRowHTML(c){
   const actionPrimaryStyle=esGasTipo(c.tipo)
     ?'background:var(--teal-bg);color:var(--teal);border-color:rgba(58,200,180,.35)'
     :'background:var(--amber-bg);color:var(--amber);border-color:rgba(232,168,58,.35)';
+  const facturaUrl=String(c.factura_url||'').trim();
+  const facturaBtn=facturaUrl?`<button class="cr-act" onclick="event.stopPropagation();window.open('${facturaUrl.replace(/\\/g,'\\\\').replace(/'/g,"\\'")}','_blank','noopener')">Ver factura</button>`:'';
   let actions='';
   if(est==='pendiente') actions=`<div class="cr-actions">
     <button class="cr-act" onclick="event.stopPropagation();openDetail(${idJs(c.id)})">Ver ficha →</button>
+    ${facturaBtn}
   </div>`;
   else if(est==='enviado') actions=`<div class="cr-actions">
     <button class="cr-act" onclick="event.stopPropagation();openDetail(${idJs(c.id)})">Ver ficha →</button>
+    ${facturaBtn}
   </div>`;
   else if(est==='firmado') actions=`<div class="cr-actions">
     <button class="cr-act" onclick="event.stopPropagation();openDetail(${idJs(c.id)})">Ver ficha →</button>
+    ${facturaBtn}
   </div>`;
   else actions=`<div class="cr-actions">
     <button class="cr-act" onclick="event.stopPropagation();openDetail(${idJs(c.id)})">Ver ficha →</button>
+    ${facturaBtn}
   </div>`;
   const detalleCompleto=`
       <div class="cid">Comercializadora anterior: ${c.comercializadora||'—'}</div>
+      <div class="cid">CUPS: ${c.cups||'—'}</div>
       <div class="cid">DNI titular contrato: ${c.dni||'—'}</div>
       <div class="cid">Email contacto: ${c.email||'—'}</div>
       <div class="cid">Telefono de contacto: ${c.tel||'—'}</div>
@@ -942,6 +949,8 @@ function openDetail(id){
     ['Fecha firma',c.firma?fmtC(new Date(c.firma+'T12:00:00')):'Pendiente',false],
     ['Activación',c.activ?fmtC(new Date(c.activ+'T12:00:00')):'Pendiente',false],
   ];
+  const facturaUrl=String(c.factura_url||'').trim();
+  const contratoExtra=facturaUrl?`<div class="df"><div class="df-l">Factura PDF</div><div class="df-v"><a class="edit-btn" href="${facturaUrl.replace(/"/g,'&quot;').replace(/'/g,'&#39;')}" target="_blank" rel="noopener noreferrer">Ver factura PDF</a></div></div>`:'';
   const bancarioFields=[
     ['IBAN cargo luz/gas',c.iban||'—',true],
     ['IBAN bono fidelidad',c.iban_bono||'—',true],
@@ -953,7 +962,7 @@ function openDetail(id){
     </div>
     <div class="dg-section">
       <div class="dg-title">Contrato</div>
-      <div class="dg-subgrid">${renderFields(contratoFields)}</div>
+      <div class="dg-subgrid">${renderFields(contratoFields)}${contratoExtra}</div>
     </div>
     <div class="dg-section">
       <div class="dg-title">Datos bancarios</div>
@@ -1586,7 +1595,7 @@ async function sincronizarConSupabase(){
     }
     const {data,error}=await supabaseClient
       .from('contratos')
-      .select('id,cliente_id,tipo,cups,comercializadora_actual,ahorro_estimado,estado,fecha_contrato_enviado,fecha_contrato_firmado,fecha_activado,fecha_baja,clientes(nombre,apellidos,dni,email,telefono,iban_cargo,iban_bono)');
+      .select('id,cliente_id,tipo,cups,comercializadora_actual,ahorro_estimado,estado,fecha_contrato_enviado,fecha_contrato_firmado,fecha_activado,fecha_baja,factura_url,clientes(nombre,apellidos,dni,email,telefono,iban_cargo,iban_bono)');
     if(error) throw error;
     clientesSupabase=(data||[]).map(r=>{
       const cli=r.clientes||{};
@@ -1613,6 +1622,7 @@ async function sincronizarConSupabase(){
         firma:toYmd(r.fecha_contrato_firmado),
         activ:toYmd(r.fecha_activado),
         baja:toYmd(r.fecha_baja),
+        factura_url:r.factura_url||'',
         contrato:String(r.id),
         t1:p.t1||'',t2:p.t2||'',t3:p.t3||'',t4:p.t4||''
       };
