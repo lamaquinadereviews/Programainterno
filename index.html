@@ -350,14 +350,14 @@ select option{background:var(--card2)}
     <div class="kpis">
       <div class="kpi"><div class="kl">Pendientes</div><div class="kv" id="k-f"></div></div>
       <div class="kpi"><div class="kl">Activos</div><div class="kv" id="k-a"></div></div>
-      <div class="kpi" onclick="show('hoy')" style="cursor:pointer" title="Ir a Pagos de hoy"><div class="kl">Pagos hoy</div><div class="kv warn" id="k-h"></div></div>
+      <div class="kpi"><div class="kl">Pagos hoy</div><div class="kv warn" id="k-h"></div></div>
     </div>
   </div>
 
   <!-- NAV -->
   <div class="nav">
-    <button class="nt"    onclick="show('clientes')">Mis clientes</button>
     <button class="nt on" onclick="show('hoy')">Pagos de hoy</button>
+    <button class="nt"    onclick="show('clientes')">Mis clientes</button>
     <button class="nt"    onclick="show('historial')">Historial de pagos</button>
   </div>
 
@@ -1081,7 +1081,7 @@ function show(t){
     const el=document.getElementById('t-'+id);
     if(el) el.style.display=id===t?'block':'none';
   });
-  document.querySelectorAll('.nt').forEach((el,i)=>el.classList.toggle('on',['clientes','hoy','historial'][i]===t));
+  document.querySelectorAll('.nt').forEach((el,i)=>el.classList.toggle('on',['hoy','clientes','historial'][i]===t));
   if(t==='hoy'){renderHoy();updateKPIs();}
   else if(t==='clientes') renderClientes();
   else if(t==='historial') renderHistorial();
@@ -1378,7 +1378,7 @@ function confirmPendienteEnvio(){
 }
 
 updateKPIs();
-show('clientes');
+renderHoy();
 </script>
 <!-- MODAL: CONTRATO ENVIADO (nuevo cliente) -->
 <div class="mo" id="mo-enviado">
