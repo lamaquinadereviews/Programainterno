@@ -1627,7 +1627,7 @@ async function sincronizarConSupabase(){
     }
     const {data,error}=await supabaseClient
       .from('contratos')
-      .select('id,cliente_id,tipo,cups,comercializadora_actual,ahorro_estimado,estado,fecha_contrato_enviado,fecha_contrato_firmado,fecha_activado,fecha_baja,factura_url,clientes(nombre,apellidos,dni,email,telefono,iban_cargo,iban_bono)');
+      .select('id,cliente_id,tipo,cups,comercializadora_actual,ahorro_estimado,estado,fecha_contrato_enviado,fecha_contrato_firmado,fecha_activado,fecha_baja,factura_url,iban_cargo,iban_bono,clientes(nombre,apellidos,dni,email,telefono)');
     if(error) throw error;
     clientesSupabase=(data||[]).map(r=>{
       const cli=r.clientes||{};
@@ -1643,8 +1643,8 @@ async function sincronizarConSupabase(){
         dni:cli.dni||'',
         email:cli.email||'',
         tel:cli.telefono||'',
-        iban:cli.iban_cargo||'',
-        iban_bono:cli.iban_bono||'',
+        iban:r.iban_cargo||'',
+        iban_bono:r.iban_bono||'',
         cups:r.cups||'',
         tipo:r.tipo||'Luz',
         comercializadora:r.comercializadora_actual||'',
