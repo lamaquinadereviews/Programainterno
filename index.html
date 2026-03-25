@@ -683,7 +683,46 @@ body::before{
   font-weight:700 !important;
 }
 #fecha-hoy::before{
-  content:'📅' !important;
+  content:'' !important;
+}
+
+/* ── Header SaaS (rediseño visual) ─────────────────────────── */
+.brand{align-items:flex-start}
+.brand-stack{
+  display:flex;
+  flex-direction:column;
+  align-items:flex-start;
+  gap:6px;
+}
+.brand-qntlc{
+  font-family:'DM Sans',sans-serif !important;
+  font-size:22px !important;
+  font-weight:900 !important;
+  letter-spacing:0.12em !important;
+  color:#0f0f10 !important;
+  text-transform:uppercase !important;
+  line-height:1 !important;
+}
+.brand-panel{
+  font-family:'DM Sans',sans-serif !important;
+  font-size:11px !important;
+  font-weight:800 !important;
+  letter-spacing:0.06em !important;
+  color:#9999aa !important;
+  text-transform:lowercase !important;
+  line-height:1.2 !important;
+}
+.brand-divider{
+  width:100%;
+  height:1px;
+  background:#e5e5e7;
+  margin-top:6px;
+  margin-bottom:4px;
+}
+.brand-date{
+  font-size:11px !important;
+  color:#aaaabc !important;
+  line-height:1.2 !important;
 }
 
 /* KPIs */
@@ -906,8 +945,12 @@ body::before{
       </svg>
       </div>
       <div>
-        <div class="brand-text-main">¡Que No Te La Cuelen!</div>
-        <div class="brand-text-sub" id="fecha-hoy">Cargando...</div>
+        <div class="brand-stack" aria-label="Encabezado del panel">
+          <div class="brand-qntlc">QNTLC</div>
+          <div class="brand-panel">panel de gestión</div>
+          <div class="brand-divider" aria-hidden="true"></div>
+          <div class="brand-date" id="fecha-hoy">Cargando...</div>
+        </div>
       </div>
     </div>
     <div class="kpis">
