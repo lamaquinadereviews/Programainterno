@@ -954,10 +954,10 @@ body::before{
       </div>
     </div>
     <div class="kpis">
-      <div class="kpi" id="kpi-pendientes" onclick="show('clientes')" role="button" tabindex="0" aria-label="Ir a Clientes (Pendientes)">
+      <div class="kpi" id="kpi-pendientes" onclick="focusGrupo('pendiente')" role="button" tabindex="0" aria-label="Ir a Clientes (Pendientes)">
         <div class="kl">Pendientes</div><div class="kv" id="k-f"></div>
       </div>
-      <div class="kpi" id="kpi-activos" onclick="show('clientes');setTimeout(function(){var el=document.getElementById('gc-activo');if(el){el.scrollIntoView({behavior:'smooth',block:'center'});}},180);" role="button" tabindex="0" aria-label="Ir a Clientes (Activos)">
+      <div class="kpi" id="kpi-activos" onclick="focusGrupo('activo')" role="button" tabindex="0" aria-label="Ir a Clientes (Activos)">
         <div class="kl">Activos</div><div class="kv" id="k-a"></div>
       </div>
       <div class="kpi" onclick="show('hoy')" style="cursor:pointer" title="Ir a Pagos de hoy"><div class="kl">Pagos hoy</div><div class="kv warn" id="k-h"></div></div>
@@ -1188,17 +1188,11 @@ async function getCobradoHoySupabase(){
   if(!supabaseClient) return 0;
   const y=ymdHoy();
   const {data,error}=await supabaseClient
-    .from('contratos')
-    .select('fecha_pago_1,fecha_pago_2,fecha_pago_3,fecha_pago_4,pago_1_hecho,pago_2_hecho,pago_3_hecho,pago_4_hecho');
-  if(error){console.warn('No se pudo calcular cobrado hoy',error);return 0;}
-  let totalPagos=0;
-  (data||[]).forEach(r=>{
-    if(String(r.fecha_pago_1||'').slice(0,10)===y&&r.pago_1_hecho) totalPagos++;
-    if(String(r.fecha_pago_2||'').slice(0,10)===y&&r.pago_2_hecho) totalPagos++;
-    if(String(r.fecha_pago_3||'').slice(0,10)===y&&r.pago_3_hecho) totalPagos++;
-    if(String(r.fecha_pago_4||'').slice(0,10)===y&&r.pago_4_hecho) totalPagos++;
-  });
-  return totalPagos*12.5;
+    .from('historial_pagos')
+    .select('importe')
+    .eq('fecha_pago',y);
+  if(error){console.warn('No se pudo calcular cobrado hoy desde historial_pagos',error);return 0;}
+  return (data||[]).reduce((s,r)=>s+Number(r.importe||0),0);
 }
 
 function getPagosVencidos(){
@@ -1262,7 +1256,7 @@ function updateKPIs(){
   const fmt=n=>'<span style="font-family:monospace;font-size:28px;font-weight:800;letter-spacing:-1px;color:inherit">'+n+'</span>';
   document.getElementById('k-f').innerHTML=fmt(nf);
   document.getElementById('k-a').innerHTML=fmt(na);
-  getPagosHoySupabasePendientes().then(rows=>{document.getElementById('k-h').innerHTML=fmt(rows.length);});
+  getCobradoHoySupabase().then(sum=>{document.getElementById('k-h').innerHTML=fmt(Number(sum||0).toFixed(2));});
 }
 
 function marcarPagado(cid,key){
@@ -1462,6 +1456,33 @@ function toggleGrupo(key){
     requestAnimationFrame(()=>requestAnimationFrame(()=>{body.style.maxHeight='0';}));
     chev.classList.remove('open');
   }
+}
+
+function focusGrupo(targetKey){
+  // Asegura que estemos en el tab de "Clientes" y enfoca el funnel objetivo.
+  show('clientes');
+  Object.keys(grupoOpen).forEach(clave=>{
+    const shouldOpen=clave===targetKey;
+    grupoOpen[clave]=shouldOpen;
+    const body=document.getElementById('gb-'+clave);
+    const chev=document.getElementById('gc-'+clave);
+    if(!body||!chev) return;
+
+    if(shouldOpen){
+      body.style.maxHeight=body.scrollHeight+'px';
+      chev.classList.add('open');
+      setTimeout(()=>{if(grupoOpen[clave])body.style.maxHeight='none';},350);
+    }else{
+      body.style.maxHeight=body.scrollHeight+'px';
+      requestAnimationFrame(()=>requestAnimationFrame(()=>{body.style.maxHeight='0';}));
+      chev.classList.remove('open');
+    }
+  });
+
+  setTimeout(()=>{
+    const el=document.getElementById('gb-'+targetKey);
+    if(el){el.scrollIntoView({behavior:'smooth',block:'start'});}
+  },200);
 }
 
 function renderGrupo(key,titulo,dotColor,lista,emptyMsg){
@@ -1689,12 +1710,44 @@ const pagoSearchText=h=>{
     c.nom,c.tel,c.email,c.dni,c.cups,c.iban,c.iban_bono,c.contrato,c.comercializadora,c.tipo
   ].map(v=>String(v||'').toLowerCase()).join(' ');
 };
-function renderHistorial(){
+async function renderHistorial(){
+  // Carga desde Supabase (historial_pagos) en lugar de localStorage (qntlch)
+  if(supabaseClient){
+    try{
+      const {data,error}=await supabaseClient
+        .from('historial_pagos')
+        .select('id,contrato_id,cliente_nombre,tramo,importe,fecha_pago,iban_bono,created_at');
+      if(error) throw error;
+      historial=(data||[]).map(r=>{
+        const tN=Number(r.tramo);
+        const tLabel=TRAMO_DEFS[tN-1]?.label||'';
+        return{
+          id:r.id,
+          contrato_id:r.contrato_id,
+          nom:r.cliente_nombre||'Sin nombre',
+          tel:'', // No requerido para el diseño del historial; se mantiene para compatibilidad interna
+          tramo:tLabel,
+          tramo_num:tN,
+          importe:Number(r.importe||0),
+          fecha:r.fecha_pago?`${r.fecha_pago}T12:00:00`:'',
+          iban:r.iban_bono||'',
+          created_at:r.created_at||null,
+        };
+      });
+    }catch(e){
+      console.warn('No se pudo cargar historial_pagos desde Supabase. Se usa cache local.',e);
+      historial=ldH();
+    }
+  } else {
+    historial=ldH();
+  }
+
   const chips=document.getElementById('hist-chips');
   const names=[...new Set(historial.map(h=>h.nom))];
   chips.innerHTML=`<button class="fchip ${histFilter==='todos'?'on':''}" onclick="setHF('todos')">Todos</button>`
     +names.map((n,i)=>`<button class="fchip ${histFilter===n?'on':''}" onclick="setHistN(${i})">${n}</button>`).join('');
   window._histNames=names;
+
   const monthSel=document.getElementById('hist-month');
   const monthKeys=[...new Set(historial.map(h=>{
     const d=new Date(h.fecha);
@@ -1711,6 +1764,7 @@ function renderHistorial(){
     histMonth=monthKeys.includes(prevMonth)?prevMonth:'all';
     monthSel.value=histMonth;
   }
+
   const fil=histFilter==='todos'?historial:historial.filter(h=>h.nom===histFilter);
   const byMonth=histMonth==='all'?fil:fil.filter(h=>{
     const d=new Date(h.fecha);
@@ -1720,6 +1774,7 @@ function renderHistorial(){
   });
   const byQuery=histQuery.trim()?byMonth.filter(h=>pagoSearchText(h).includes(histQuery.trim().toLowerCase())):byMonth;
   const sorted=[...byQuery].sort((a,b)=>histOrder==='recent_asc'?new Date(a.fecha)-new Date(b.fecha):new Date(b.fecha)-new Date(a.fecha));
+
   const el=document.getElementById('l-hist');
   if(!sorted.length){
     const msg=histQuery.trim()?'No se encontraron pagos con ese criterio':'Sin pagos aún';
@@ -1727,17 +1782,18 @@ function renderHistorial(){
     el.innerHTML=`<div class="empty"><div class="empty-i">🧾</div><div class="empty-t">${msg}</div><div class="empty-s">${sub}</div></div>`;
     document.getElementById('hist-total').style.display='none'; return;
   }
+
   document.getElementById('hist-total').style.display='flex';
-  document.getElementById('hist-tv').textContent=sorted.reduce((s,h)=>s+h.importe,0).toFixed(2)+' €';
+  document.getElementById('hist-tv').textContent=sorted.reduce((s,h)=>s+(Number(h.importe)||0),0).toFixed(2)+' €';
   el.innerHTML=sorted.map(h=>`<div class="hr">
     <div class="av av-sm av-dim">${ini(h.nom)}</div>
     <div style="flex:1;min-width:0">
       <div style="font-family:'Syne',sans-serif;font-size:14px;font-weight:700">${h.nom}</div>
-      <div style="font-size:12px;color:var(--ink2)">${h.tel||'—'} · Tramo ${h.tramo}</div>
+      <div style="font-size:12px;color:var(--ink2)">Tramo ${h.tramo}</div>
       <div class="pmono" style="margin-top:2px">${h.iban||'—'}</div>
     </div>
     <div style="text-align:right;flex-shrink:0">
-      <div class="ha">+${h.importe.toFixed(2)} €</div>
+      <div class="ha">+${Number(h.importe||0).toFixed(2)} €</div>
       <div class="hdate">${new Date(h.fecha).toLocaleDateString('es-ES',{day:'2-digit',month:'2-digit',year:'numeric'})}</div>
       <div class="hact">
         <button type="button" class="hdel" title="Eliminar pago" onclick="openDeletePago(${idJs(h.id)})">🗑️</button>
@@ -1762,12 +1818,45 @@ function cancelDeletePago(){
   deletePagoId=null;
   closeMo('mo-del-pago');
 }
-function confirmDeletePago(){
+async function confirmDeletePago(){
   if(deletePagoId===null||deletePagoId===undefined){cancelDeletePago();return;}
-  historial=historial.filter(x=>String(x.id)!==String(deletePagoId));
-  svH(historial);
+  const h=historial.find(x=>String(x.id)===String(deletePagoId));
+  if(!h){cancelDeletePago();renderHistorial();return;}
+
+  // Modo local (fallback) si no hay Supabase
+  if(!supabaseClient){
+    historial=historial.filter(x=>String(x.id)!==String(deletePagoId));
+    svH(historial);
+    cancelDeletePago();
+    renderHistorial();
+    updateKPIs();
+    return;
+  }
+
+  try{
+    const {error:delErr}=await supabaseClient
+      .from('historial_pagos')
+      .delete()
+      .eq('id',h.id);
+    if(delErr) throw delErr;
+
+    const tN=Number(h.tramo_num);
+    if(tN>=1 && tN<=4){
+      const field=`pago_${tN}_hecho`;
+      const {error:upErr}=await supabaseClient
+        .from('contratos')
+        .update({[field]:false})
+        .eq('id',h.contrato_id);
+      if(upErr) throw upErr;
+    }
+  }catch(e){
+    alert('Error eliminando pago: '+(e?.message||e));
+    return;
+  }
+
   cancelDeletePago();
-  renderHistorial();
+  await renderHistorial();
+  updateKPIs();
 }
 
 function show(t){
